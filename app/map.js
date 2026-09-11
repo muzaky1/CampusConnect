@@ -248,11 +248,7 @@ export default function MapScreen() {
               longitude: place.longitude,
             }}
             title={place.name}
-            onPress={(event) => {
-              // Prevent the map's onPress
-              // from immediately closing the card
-              event.stopPropagation();
-
+            onPress={() => {
               setSelectedPlace(place);
             }}
           />

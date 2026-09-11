@@ -5,9 +5,9 @@ import {
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  SafeAreaView,
   ActivityIndicator,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { onAuthStateChanged } from "firebase/auth";
 
@@ -31,7 +31,9 @@ export default function HomeScreen() {
 
       // Save this device's Expo push token to Firestore so other
       // users can send real push notifications to it.
-      registerForPushNotifications(currentUser.uid);
+      registerForPushNotifications(currentUser.uid).catch((error) =>
+        console.warn("Push token registration failed:", error)
+      );
     });
 
     return unsubscribe;
@@ -253,7 +255,7 @@ export default function HomeScreen() {
 
         <TouchableOpacity
           style={styles.infoCard}
-          onPress={() => router.push("/notifications")}
+          onPress={() => router.push("/campus-updates")}
           activeOpacity={0.7}
         >
           <View style={styles.infoIconContainer}>

@@ -92,11 +92,21 @@ export default function Messages() {
   }, [router]);
 
   const openChat = (student) => {
+    const userId = student.uid || student.id;
+
+    if (!userId) {
+      Alert.alert(
+        "Cannot Open Chat",
+        "This profile is missing its user ID."
+      );
+      return;
+    }
+
     router.push({
       pathname: "/chat",
       params: {
-        userId: student.uid,
-        name: student.name,
+        userId,
+        name: student.name || "CampusConnect User",
       },
     });
   };
@@ -117,13 +127,13 @@ export default function Messages() {
     >
       <View style={styles.avatar}>
         <Text style={styles.avatarText}>
-          {item.name.charAt(0).toUpperCase()}
+          {(item.name || "?").charAt(0).toUpperCase()}
         </Text>
       </View>
 
       <View style={styles.messageInfo}>
         <View style={styles.topRow}>
-          <Text style={styles.name}>{item.name}</Text>
+          <Text style={styles.name}>{item.name || "CampusConnect User"}</Text>
         </View>
 
         <View style={styles.bottomRow}>

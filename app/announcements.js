@@ -85,7 +85,7 @@ export default function AnnouncementsScreen() {
 
       <FlatList
         data={announcements}
-        keyExtractor={(item) => item.id.toString()}
+        keyExtractor={(item) => String(item?.id ?? Math.random())}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}

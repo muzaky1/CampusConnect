@@ -1,0 +1,15 @@
+{
+  "name": "campusconnect-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CampusConnect companion web service (dev LAN server for the Expo app).",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "campusconnect": "file:..",
+    "cors": "^2.8.5",
+    "express": "^4.21.2"
+  }
+}

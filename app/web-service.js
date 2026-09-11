@@ -67,12 +67,16 @@ export default function WebServiceScreen() {
         message.trim()
       );
 
-      if (response.success) {
+      if (response?.success) {
         setFeedbackMessage(response.message);
 
         // Clear form after successful submission
         setName("");
         setMessage("");
+      } else {
+        setFeedbackError(
+          response?.message || "The server did not accept the feedback."
+        );
       }
     } catch (error) {
       setFeedbackError(
@@ -179,25 +183,28 @@ export default function WebServiceScreen() {
             {/* Success */}
             <View style={styles.successCard}>
               <Text style={styles.successText}>
-                ✓ {campus.message}
+                ✓ {campus?.message || "Response received"}
               </Text>
             </View>
 
             {/* Campus Information */}
             <View style={styles.campusCard}>
               <Text style={styles.campusName}>
-                {campus.data.name}
+                {campus?.data?.name || "Campus"}
               </Text>
 
               <Text style={styles.location}>
-                📍 {campus.data.location}
+                📍 {campus?.data?.location || "Unknown location"}
               </Text>
 
               <Text style={styles.facilitiesTitle}>
                 Campus Facilities
               </Text>
 
-              {campus.data.facilities.map(
+              {(Array.isArray(campus?.data?.facilities)
+                ? campus.data.facilities
+                : []
+              ).map(
                 (facility, index) => (
                   <View
                     key={index}

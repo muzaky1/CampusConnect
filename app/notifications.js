@@ -90,10 +90,23 @@ export default function NotificationScreen() {
     }
   };
 
-  // Mark notification as read
+  // Mark notification as read; deep-link into the chat when the
+  // notification carries a chat payload (see app/_layout.tsx).
   const handleNotificationPress = (id) => {
+    const tapped = notifications.find((n) => n.id === id);
+
     markNotificationAsRead(id);
     loadNotifications();
+
+    if (tapped?.data?.userId && tapped?.data?.name) {
+      router.push({
+        pathname: "/chat",
+        params: {
+          userId: String(tapped.data.userId),
+          name: String(tapped.data.name),
+        },
+      });
+    }
   };
 
   // Clear all notifications

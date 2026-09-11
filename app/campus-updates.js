@@ -9,7 +9,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { getCampusUpdates } from "../services/networkService";
+import { getCampusUpdates } from "../services/api";
 
 export default function CampusUpdatesScreen() {
   const [updates, setUpdates] = useState([]);
@@ -50,11 +50,11 @@ export default function CampusUpdatesScreen() {
 
   const handleRefresh = () => {
     setRefreshing(true);
-    loadUpdates();
+    loadUpdates().catch(() => {});
   };
 
   const formatTitle = (title) => {
-    if (!title) return "Campus Update";
+    if (typeof title !== "string" || !title) return "Campus Update";
 
     return title
       .split(" ")

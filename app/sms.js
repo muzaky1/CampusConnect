@@ -27,7 +27,11 @@ export default function SMS() {
       return;
     }
 
-    const smsUrl = `sms:${phoneNumber}?body=${encodeURIComponent(message)}`;
+    // iOS uses `&body=` while Android uses `?body=`; strip spaces/dashes
+    // so the dialer receives a clean number.
+    const cleanNumber = phoneNumber.replace(/[\s\-()]/g, "");
+    const separator = Platform.OS === "ios" ? "&" : "?";
+    const smsUrl = `sms:${cleanNumber}${separator}body=${encodeURIComponent(message)}`;
 
     try {
       const supported = await Linking.canOpenURL(smsUrl);

@@ -248,16 +248,6 @@ export default function SMS() {
             recipient — no backend server involved.
           </Text>
         </View>
-
-        <View style={styles.unitCard}>
-          <Text style={styles.unitTitle}>Unit 07 — Network Services</Text>
-
-          <Text style={styles.unitText}>
-            This screen demonstrates integration with an external
-            SMS web service using HTTP POST requests and
-            asynchronous API responses.
-          </Text>
-        </View>
       </ScrollView>
     </KeyboardAvoidingView>
   );

@@ -1,29 +1,80 @@
 // notificationService.js
+// expo-notifications remote push is unavailable in Expo Go on Android
+// from SDK 53+. Static `import * as Notifications` throws at load time
+// in Expo Go and takes down the whole router. Lazy-load it instead so
+// the app still runs (in-app notifications keep working).
 
-import * as Notifications from "expo-notifications";
 import * as Device from "expo-device";
 import { Platform } from "react-native";
 import { doc, setDoc } from "firebase/firestore";
 
 import { db } from "./services/firebase";
 
+let Notifications = null;
+try {
+  Notifications = require("expo-notifications");
+} catch (_e) {
+  console.log(
+    "expo-notifications unavailable (Expo Go has no remote push since SDK 53). In-app notifications still work."
+  );
+}
+
+export const isNotificationsAvailable = () => !!Notifications;
+
 // ==================================================
 // NOTIFICATION HANDLER
 // ==================================================
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: false,
-  }),
-});
+if (Notifications?.setNotificationHandler) {
+  try {
+    Notifications.setNotificationHandler({
+      handleNotification: async () => ({
+        shouldShowAlert: true,
+        shouldPlaySound: true,
+        shouldSetBadge: false,
+      }),
+    });
+  } catch (e) {
+    console.log("Could not set notification handler:", e?.message);
+  }
+}
+
+// No-op subscription shape matching expo-notifications EventSubscription.
+const noopSubscription = () => ({ remove: () => {} });
+
+export const addNotificationReceivedListener = (listener) => {
+  if (!Notifications?.addNotificationReceivedListener) {
+    return noopSubscription();
+  }
+  try {
+    return Notifications.addNotificationReceivedListener(listener);
+  } catch (e) {
+    console.log("addNotificationReceivedListener failed:", e?.message);
+    return noopSubscription();
+  }
+};
+
+export const addNotificationResponseReceivedListener = (listener) => {
+  if (!Notifications?.addNotificationResponseReceivedListener) {
+    return noopSubscription();
+  }
+  try {
+    return Notifications.addNotificationResponseReceivedListener(listener);
+  } catch (e) {
+    console.log("addNotificationResponseReceivedListener failed:", e?.message);
+    return noopSubscription();
+  }
+};
 
 // ==================================================
 // ANDROID NOTIFICATION CHANNEL
 // ==================================================
 
 export const setupNotifications = async () => {
+  if (!Notifications) {
+    // Expo Go: no native notification module — in-app list still works.
+    return false;
+  }
   try {
     if (Platform.OS === "android") {
       await Notifications.setNotificationChannelAsync(
@@ -76,6 +127,10 @@ export const setupNotifications = async () => {
  * so other users can send this device real push notifications.
  */
 export const registerForPushNotifications = async (userId) => {
+  if (!Notifications) {
+    console.log("Push notifications unavailable in Expo Go — skipping token registration.");
+    return null;
+  }
   if (!Device.isDevice) {
     // Push tokens only exist on real hardware
     console.log("Push notifications require a physical device.");
@@ -236,6 +291,10 @@ export const sendDeviceNotification = async ({
   title,
   message,
 }) => {
+  if (!Notifications) {
+    // Expo Go: record in-app only; caller already did addNotification().
+    return false;
+  }
   try {
     // Prepare notification system
     const ready = await setupNotifications();

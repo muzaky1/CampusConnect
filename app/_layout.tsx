@@ -1,10 +1,13 @@
 import { useEffect } from "react";
 import { Stack, useRouter } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import * as Notifications from "expo-notifications";
 import "react-native-reanimated";
 
-import { addNotification } from "../notificationService";
+import {
+  addNotification,
+  addNotificationReceivedListener,
+  addNotificationResponseReceivedListener,
+} from "../notificationService";
 
 export default function RootLayout() {
   const router = useRouter();
@@ -12,8 +15,9 @@ export default function RootLayout() {
   useEffect(() => {
     // Foreground: notification arrives while app is open.
     // Records it so the Notifications screen reflects real incoming pushes.
-    const receivedSub = Notifications.addNotificationReceivedListener(
-      (notification) => {
+    // No-ops in Expo Go where expo-notifications is unavailable.
+    const receivedSub = addNotificationReceivedListener(
+      (notification: any) => {
         const { title, body, data } = notification.request.content;
 
         addNotification({
@@ -27,7 +31,7 @@ export default function RootLayout() {
     // Tap: user presses notification from system tray.
     // Records it AND deep-links straight into the chat thread.
     const responseSub =
-      Notifications.addNotificationResponseReceivedListener((response) => {
+      addNotificationResponseReceivedListener((response: any) => {
         const { title, body, data } = response.notification.request.content;
 
         addNotification({

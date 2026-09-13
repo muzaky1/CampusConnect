@@ -1,5 +1,6 @@
 import { getApps, initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { getStorage } from "firebase/storage";
 import {
   getAuth,
   getReactNativePersistence,
@@ -33,5 +34,7 @@ try {
 export { auth };
 
 export const db = getFirestore(app);
+
+export const storage = getStorage(app);
 
 export default app;

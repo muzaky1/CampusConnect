@@ -10,21 +10,31 @@ import {
   Platform,
   ActivityIndicator,
   Alert,
+  Linking,
+  Modal,
+  Pressable,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc } from "firebase/firestore";
+import * as ImagePicker from "expo-image-picker";
+import { Image } from "expo-image";
+import { useVideoPlayer, VideoView } from "expo-video";
 
 import { auth, db } from "../services/firebase";
 import {
   buildConversationId,
   listenToMessages,
   sendChatMessage,
+  sendMediaMessage,
+  uploadChatMedia,
 } from "../services/chatService";
 import { sendPushNotification } from "../notificationService";
 
 const PAGE_SIZE_NOTE = "Showing the latest 200 messages.";
+const MAX_MEDIA_BYTES = 50 * 1024 * 1024;
+const URL_REGEX = /(https?:\/\/[^\s]+)/g;
 
 function toDateSafe(value) {
   if (!value) return null;
@@ -74,6 +84,53 @@ function formatDayLabel(timestamp) {
   });
 }
 
+// ── MMS helpers ──────────────────────────────────────────────────────────
+// Render text with clickable links (https://…).
+function MessageText({ text, isMine }) {
+  const parts = String(text ?? "").split(URL_REGEX);
+  if (parts.length === 1) {
+    return (
+      <Text style={[styles.messageText, isMine && styles.myMessageText]}>
+        {text}
+      </Text>
+    );
+  }
+  return (
+    <Text style={[styles.messageText, isMine && styles.myMessageText]}>
+      {parts.map((part, index) => {
+        const isLink = /^https?:\/\/[^\s]+$/.test(part);
+        if (!isLink) return <Text key={index}>{part}</Text>;
+        return (
+          <Text
+            key={index}
+            style={[styles.linkText, isMine && styles.myLinkText]}
+            onPress={() => Linking.openURL(part).catch(() => {})}
+          >
+            {part}
+          </Text>
+        );
+      })}
+    </Text>
+  );
+}
+
+// Each video bubble owns its player (per expo-video v54 docs).
+function ChatVideoBubble({ uri }) {
+  const player = useVideoPlayer(uri, (p) => {
+    p.loop = false;
+  });
+  return (
+    <VideoView
+      style={styles.mediaImage}
+      player={player}
+      allowsFullscreen
+      allowsPictureInPicture
+      nativeControls
+      contentFit="contain"
+    />
+  );
+}
+
 export default function ChatScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
@@ -96,6 +153,8 @@ export default function ChatScreen() {
   const [listenerError, setListenerError] = useState(null);
   const [retryKey, setRetryKey] = useState(0);
   const [sending, setSending] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [fullscreenImage, setFullscreenImage] = useState(null);
 
   const flatListRef = useRef(null);
   const sendInFlight = useRef(false);
@@ -164,6 +223,8 @@ export default function ChatScreen() {
         (firebaseMessages) => {
           const formatted = firebaseMessages.map((item) => ({
             id: item.id,
+            type: item.type === "video" ? "video" : item.type === "image" ? "image" : "text",
+            mediaUrl: typeof item.mediaUrl === "string" ? item.mediaUrl : null,
             text: String(item.text ?? ""),
             sender: item.senderId === currentUserId ? "me" : "other",
             time: formatMessageTime(item.createdAt),
@@ -261,6 +322,8 @@ export default function ChatScreen() {
     // Optimistic UI: clear the box immediately, show a pending bubble.
     const optimistic = {
       id: `pending-${Date.now()}`,
+      type: "text",
+      mediaUrl: null,
       text: trimmed,
       sender: "me",
       time: new Date().toLocaleTimeString([], {
@@ -304,6 +367,132 @@ export default function ChatScreen() {
     }
   }, [message, currentUserId, conversationId, otherUserId, notifyRecipient]);
 
+  // ── MMS: pick image/video (expo-image-picker v54) and send ──────────────
+  const handlePickAndSendMedia = useCallback(
+    async (kind) => {
+      if (!currentUserId || !conversationId || uploading) return;
+
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert(
+          "Permission Required",
+          "Allow photo library access to share pictures and videos."
+        );
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: kind === "video" ? ["videos"] : ["images"],
+        quality: 0.7,
+        videoExportPreset:
+          ImagePicker.VideoExportPreset?.H264_1280x720 ?? undefined,
+      });
+
+      if (result.canceled || !result.assets?.length) return;
+      const asset = result.assets[0];
+
+      if (asset.fileSize && asset.fileSize > MAX_MEDIA_BYTES) {
+        Alert.alert(
+          "File Too Large",
+          "Please choose a file under 50 MB."
+        );
+        return;
+      }
+
+      const caption = message.trim().slice(0, 1000);
+      const type = asset.type === "video" ? "video" : "image";
+      const optimisticId = `pending-media-${Date.now()}`;
+
+      setMessage("");
+      setPendingMessages((prev) => [
+        ...prev,
+        {
+          id: optimisticId,
+          type,
+          mediaUrl: asset.uri,
+          localPreview: true,
+          text: caption,
+          sender: "me",
+          time: new Date().toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          dayLabel: "Today",
+          createdAtMs: Date.now(),
+          pending: true,
+        },
+      ]);
+      setUploading(true);
+
+      try {
+        const remoteUrl = await uploadChatMedia(
+          asset.uri,
+          conversationId,
+          type
+        );
+        // Swap preview for remote URL before echo arrives.
+        setPendingMessages((prev) =>
+          prev.map((p) =>
+            p.id === optimisticId
+              ? { ...p, mediaUrl: remoteUrl, localPreview: false }
+              : p
+          )
+        );
+        await sendMediaMessage(
+          conversationId,
+          currentUserId,
+          {
+            type,
+            mediaUrl: remoteUrl,
+            text: caption,
+            width: asset.width,
+            height: asset.height,
+            duration: asset.duration ?? null,
+          },
+          otherUserId
+        );
+        notifyRecipient(
+          caption || (type === "image" ? "📷 Photo" : "🎬 Video")
+        ).catch(() => {});
+      } catch (error) {
+        console.error("Media send failed:", {
+          code: error?.code,
+          message: error?.message,
+          serverResponse: error?.customData?.serverResponse ?? error?.serverResponse,
+        });
+        setPendingMessages((prev) =>
+          prev.filter((p) => p.id !== optimisticId)
+        );
+        if (caption) setMessage(caption);
+        const detail =
+          error?.code === "storage/unauthorized"
+            ? "Storage rules rejected the upload."
+            : error?.code === "storage/unknown"
+              ? "Storage returned an unknown error. Check the bucket exists and retry."
+              : "Check your connection and Storage rules.";
+        Alert.alert("Media Not Sent", `Unable to upload. ${detail}`);
+      } finally {
+        setUploading(false);
+      }
+    },
+    [currentUserId, conversationId, message, otherUserId, uploading, notifyRecipient]
+  );
+
+  const handleAttachPress = useCallback(() => {
+    if (!conversationId) {
+      Alert.alert(
+        "Cannot Send Yet",
+        "Open this chat from the Messages list so a conversation can be created."
+      );
+      return;
+    }
+    Alert.alert("Share media (MMS)", "Choose what to send", [
+      { text: "Cancel", style: "cancel" },
+      { text: "📷 Photo", onPress: () => handlePickAndSendMedia("image") },
+      { text: "🎬 Video", onPress: () => handlePickAndSendMedia("video") },
+    ]);
+  }, [conversationId, handlePickAndSendMedia]);
+
   const renderMessage = useCallback(({ item, index }) => {
     const isMine = item.sender === "me";
     const next = displayMessages[index + 1]; // older message (inverted list)
@@ -326,11 +515,22 @@ export default function ChatScreen() {
               item.pending && styles.pendingBubble,
             ]}
           >
-            <Text
-              style={[styles.messageText, isMine && styles.myMessageText]}
-            >
-              {item.text}
-            </Text>
+            {item.type === "image" && item.mediaUrl ? (
+              <Pressable onPress={() => setFullscreenImage(item.mediaUrl)}>
+                <Image
+                  source={{ uri: item.mediaUrl }}
+                  style={styles.mediaImage}
+                  contentFit="cover"
+                  transition={200}
+                />
+              </Pressable>
+            ) : null}
+            {item.type === "video" && item.mediaUrl ? (
+              <ChatVideoBubble uri={item.mediaUrl} />
+            ) : null}
+            {item.text ? (
+              <MessageText text={item.text} isMine={isMine} />
+            ) : null}
             <View style={styles.metaRow}>
               {item.pending ? (
                 <Text
@@ -465,10 +665,26 @@ export default function ChatScreen() {
         )}
 
         {/* Composer */}
+        {uploading ? (
+          <View style={styles.uploadingBar}>
+            <ActivityIndicator size="small" color="#168EAC" />
+            <Text style={styles.uploadingText}>
+              Uploading photo/video…
+            </Text>
+          </View>
+        ) : null}
         <View style={styles.inputContainer}>
+          <TouchableOpacity
+            style={styles.attachButton}
+            onPress={handleAttachPress}
+            activeOpacity={0.7}
+            accessibilityLabel="Attach photo or video"
+          >
+            <Text style={styles.attachText}>＋</Text>
+          </TouchableOpacity>
           <TextInput
             style={styles.input}
-            placeholder="Type a message..."
+            placeholder="Type a message or caption…"
             placeholderTextColor="#8A94A6"
             value={message}
             onChangeText={setMessage}
@@ -499,6 +715,27 @@ export default function ChatScreen() {
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
+      {/* Fullscreen image viewer (MMS) */}
+      <Modal
+        visible={!!fullscreenImage}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setFullscreenImage(null)}
+      >
+        <Pressable
+          style={styles.fullscreenBackdrop}
+          onPress={() => setFullscreenImage(null)}
+        >
+          {fullscreenImage ? (
+            <Image
+              source={{ uri: fullscreenImage }}
+              style={styles.fullscreenImage}
+              contentFit="contain"
+            />
+          ) : null}
+          <Text style={styles.fullscreenHint}>Tap to close</Text>
+        </Pressable>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -734,6 +971,23 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
   },
 
+  linkText: {
+    textDecorationLine: "underline",
+    color: "#1D4ED8",
+  },
+
+  myLinkText: {
+    color: "#E0F7FF",
+  },
+
+  mediaImage: {
+    width: 220,
+    height: 160,
+    borderRadius: 12,
+    backgroundColor: "#E5E7EB",
+    marginBottom: 6,
+  },
+
   metaRow: {
     flexDirection: "row",
     justifyContent: "flex-end",
@@ -791,5 +1045,57 @@ const styles = StyleSheet.create({
     color: "#FFFFFF",
     fontSize: 13,
     fontWeight: "700",
+  },
+
+  attachButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: "#E8F7FB",
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 8,
+  },
+
+  attachText: {
+    fontSize: 24,
+    color: "#168EAC",
+    fontWeight: "600",
+    marginTop: -2,
+  },
+
+  uploadingBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: "#E8F7FB",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+
+  uploadingText: {
+    fontSize: 12,
+    color: "#168EAC",
+    fontWeight: "600",
+  },
+
+  fullscreenBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.92)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+
+  fullscreenImage: {
+    width: "100%",
+    height: "75%",
+  },
+
+  fullscreenHint: {
+    color: "#FFFFFF",
+    marginTop: 16,
+    fontSize: 13,
+    opacity: 0.8,
   },
 });

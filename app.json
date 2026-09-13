@@ -38,6 +38,14 @@
             "backgroundColor": "#000000"
           }
         }
+      ],
+      "expo-video",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "CampusConnect needs access to your photos so you can share pictures and videos in chat.",
+          "cameraPermission": "CampusConnect needs access to your camera so you can share photos in chat."
+        }
       ]
     ],
     "experiments": {

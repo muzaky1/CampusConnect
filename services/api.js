@@ -126,3 +126,22 @@ export async function getCampusUpdates() {
     };
   }
 }
+// Send SMS through the CampusConnect backend.
+// The backend handles the KudiSMS API credentials securely.
+export async function sendSMS(phoneNumber, message) {
+  try {
+    return await fetchJson("/api/sms/send", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        phoneNumber,
+        message,
+      }),
+    });
+  } catch (error) {
+    console.error("SMS API Error:", error);
+    throw error;
+  }
+}

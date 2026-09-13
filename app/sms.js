@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   View,
   Text,
@@ -6,103 +6,184 @@ import {
   TouchableOpacity,
   StyleSheet,
   Alert,
-  Linking,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  ActivityIndicator,
 } from "react-native";
+
+import {
+  formatToKudiNumber,
+  isKudiConfigured,
+  sendKudiSMS,
+} from "../services/kudisms";
+
+const MAX_MESSAGE_LENGTH = 480;
 
 export default function SMS() {
   const [phoneNumber, setPhoneNumber] = useState("");
   const [message, setMessage] = useState("");
+  const [phoneError, setPhoneError] = useState("");
+  const [sending, setSending] = useState(false);
+
+  const trimmedMessage = message.trim();
+  const messageLength = message.length;
+  // Standard GSM SMS is 160 chars per segment.
+  const smsParts =
+    messageLength === 0 ? 0 : Math.ceil(messageLength / 160);
+
+  const formattedPreview = useMemo(
+    () => formatToKudiNumber(phoneNumber),
+    [phoneNumber]
+  );
+
+  // False until EXPO_PUBLIC_KUDISMS_* credentials are set and Expo
+  // is restarted — the banner below tells the user how to fix it.
+  const kudiReady = isKudiConfigured();
+
+  const canSend =
+    !sending &&
+    formattedPreview !== null &&
+    trimmedMessage.length > 0 &&
+    trimmedMessage.length <= MAX_MESSAGE_LENGTH;
+
+  const handlePhoneChange = (value) => {
+    setPhoneNumber(value);
+    // Clear the inline error as soon as the number becomes valid.
+    if (phoneError && formatToKudiNumber(value) !== null) {
+      setPhoneError("");
+    }
+  };
 
   const handleSendSMS = async () => {
-    if (!phoneNumber.trim()) {
-      Alert.alert("Phone Number Required", "Please enter a phone number.");
+    const formattedNumber = formatToKudiNumber(phoneNumber);
+
+    if (formattedNumber === null) {
+      const errorMessage =
+        phoneNumber.trim().length === 0
+          ? "Please enter a phone number."
+          : "Enter a valid Nigerian number, e.g. 08012345678.";
+      setPhoneError(errorMessage);
+      Alert.alert("Phone Number Required", errorMessage);
       return;
     }
 
-    if (!message.trim()) {
+    setPhoneError("");
+
+    if (!trimmedMessage) {
       Alert.alert("Message Required", "Please enter a message.");
       return;
     }
 
-    // iOS uses `&body=` while Android uses `?body=`; strip spaces/dashes
-    // so the dialer receives a clean number.
-    const cleanNumber = phoneNumber.replace(/[\s\-()]/g, "");
-    const separator = Platform.OS === "ios" ? "&" : "?";
-    const smsUrl = `sms:${cleanNumber}${separator}body=${encodeURIComponent(message)}`;
+    if (trimmedMessage.length > MAX_MESSAGE_LENGTH) {
+      Alert.alert(
+        "Message Too Long",
+        `Please keep your message under ${MAX_MESSAGE_LENGTH} characters.`
+      );
+      return;
+    }
+
+    setSending(true);
 
     try {
-      const supported = await Linking.canOpenURL(smsUrl);
+      const result = await sendKudiSMS(formattedNumber, trimmedMessage);
 
-      if (supported) {
-        await Linking.openURL(smsUrl);
-      } else {
-        Alert.alert(
-          "SMS Not Available",
-          "No messaging application is available on this device."
+      if (result && result.success === false) {
+        throw new Error(
+          result.message || "The SMS could not be sent."
         );
       }
-    } catch (error) {
-      console.log("SMS Error:", error);
 
       Alert.alert(
-        "Error",
-        "Unable to open the messaging application."
+        "SMS Sent",
+        `Your message was submitted to KudiSMS for delivery to ${formattedNumber}.`
       );
+
+      setMessage("");
+    } catch (error) {
+      console.error("SMS Error:", error);
+
+      Alert.alert(
+        "SMS Failed",
+        error?.message || "Unable to send the SMS. Please try again."
+      );
+    } finally {
+      setSending(false);
     }
   };
 
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 20}
     >
       <ScrollView
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Header */}
         <View style={styles.header}>
           <Text style={styles.title}>SMS Services</Text>
 
           <Text style={styles.subtitle}>
-            Send a message using your device's default messaging app
+            Send SMS directly through CampusConnect using KudiSMS
           </Text>
         </View>
 
-        {/* Information Card */}
         <View style={styles.infoCard}>
           <View style={styles.infoIconContainer}>
             <Text style={styles.infoIcon}>💬</Text>
           </View>
 
           <View style={styles.infoTextContainer}>
-            <Text style={styles.infoTitle}>Send SMS</Text>
+            <Text style={styles.infoTitle}>KudiSMS Messaging</Text>
 
             <Text style={styles.infoText}>
-              Enter a recipient and message. CampusConnect will
-              open your device's messaging application with the
-              information already filled in.
+              CampusConnect sends your message through the KudiSMS
+              messaging service. You do not need to open the
+              device&apos;s default SMS application.
             </Text>
           </View>
         </View>
 
-        {/* Phone Number */}
+        {kudiReady ? null : (
+          <View style={styles.setupCard}>
+            <Text style={styles.setupTitle}>⚠️ KudiSMS not configured</Text>
+
+            <Text style={styles.setupText}>
+              Add your EXPO_PUBLIC_KUDISMS_USERNAME,
+              EXPO_PUBLIC_KUDISMS_PASSWORD and
+              EXPO_PUBLIC_KUDISMS_SENDER_ID to a .env.local file, then
+              restart Expo with `npx expo start -c`.
+            </Text>
+          </View>
+        )}
+
         <Text style={styles.label}>Phone Number</Text>
 
         <TextInput
-          style={styles.input}
+          style={[styles.input, phoneError ? styles.inputError : null]}
           placeholder="e.g. 08012345678"
           placeholderTextColor="#999"
           keyboardType="phone-pad"
+          autoComplete="tel"
+          textContentType="telephoneNumber"
+          returnKeyType="next"
           value={phoneNumber}
-          onChangeText={setPhoneNumber}
+          onChangeText={handlePhoneChange}
           maxLength={15}
+          editable={!sending}
+          accessibilityLabel="Recipient phone number"
         />
 
-        {/* Message */}
+        {phoneError ? (
+          <Text style={styles.errorText}>{phoneError}</Text>
+        ) : formattedPreview ? (
+          <Text style={styles.previewText}>
+            Will send as: {formattedPreview}
+          </Text>
+        ) : null}
+
         <Text style={styles.label}>Message</Text>
 
         <TextInput
@@ -114,43 +195,66 @@ export default function SMS() {
           textAlignVertical="top"
           value={message}
           onChangeText={setMessage}
+          maxLength={MAX_MESSAGE_LENGTH}
+          editable={!sending}
+          accessibilityLabel="SMS message"
         />
 
-        {/* Send Button */}
+        <View style={styles.counterRow}>
+          <Text style={styles.counterText}>
+            {messageLength}/{MAX_MESSAGE_LENGTH}
+          </Text>
+
+          {smsParts > 0 ? (
+            <Text style={styles.counterText}>
+              {smsParts} SMS {smsParts === 1 ? "part" : "parts"}
+            </Text>
+          ) : null}
+        </View>
+
         <TouchableOpacity
-          style={styles.sendButton}
+          style={[
+            styles.sendButton,
+            !canSend && styles.sendButtonDisabled,
+          ]}
           onPress={handleSendSMS}
           activeOpacity={0.8}
+          disabled={!canSend}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: !canSend, busy: sending }}
         >
-          <Text style={styles.sendIcon}>📱</Text>
+          {sending ? (
+            <>
+              <ActivityIndicator size="small" color="#FFFFFF" />
 
-          <Text style={styles.sendText}>
-            Send SMS
-          </Text>
+              <Text style={styles.sendText}>Sending...</Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.sendIcon}>📱</Text>
+
+              <Text style={styles.sendText}>Send SMS</Text>
+            </>
+          )}
         </TouchableOpacity>
 
-        {/* Explanation */}
         <View style={styles.noteCard}>
-          <Text style={styles.noteTitle}>
-            ℹ️ How this works
-          </Text>
+          <Text style={styles.noteTitle}>ℹ️ How this works</Text>
 
           <Text style={styles.noteText}>
-            CampusConnect does not send the SMS directly. Instead,
-            it launches the device's default messaging application
-            with the recipient and message already prepared.
+            This app sends an HTTPS request directly to KudiSMS with
+            your message. KudiSMS then delivers the SMS to the
+            recipient — no backend server involved.
           </Text>
         </View>
 
-        {/* Unit 09 Demonstration */}
         <View style={styles.unitCard}>
-          <Text style={styles.unitTitle}>
-            Messaging Services
-          </Text>
+          <Text style={styles.unitTitle}>Unit 07 — Network Services</Text>
 
           <Text style={styles.unitText}>
-            This screen demonstrates how a mobile application can
-            interact with the device's messaging service.
+            This screen demonstrates integration with an external
+            SMS web service using HTTP POST requests and
+            asynchronous API responses.
           </Text>
         </View>
       </ScrollView>
@@ -232,6 +336,7 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#182033",
     marginBottom: 8,
+    marginTop: 4,
   },
 
   input: {
@@ -243,12 +348,39 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     fontSize: 15,
     color: "#182033",
-    marginBottom: 20,
+    marginBottom: 8,
+  },
+
+  inputError: {
+    borderColor: "#DC2626",
+  },
+
+  errorText: {
+    fontSize: 13,
+    color: "#DC2626",
+    marginBottom: 12,
+  },
+
+  previewText: {
+    fontSize: 13,
+    color: "#168EAC",
+    marginBottom: 12,
   },
 
   messageInput: {
     minHeight: 130,
     paddingTop: 14,
+  },
+
+  counterRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 14,
+  },
+
+  counterText: {
+    fontSize: 12,
+    color: "#6B7280",
   },
 
   sendButton: {
@@ -259,17 +391,43 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
     marginTop: 5,
+    gap: 9,
+  },
+
+  sendButtonDisabled: {
+    opacity: 0.55,
   },
 
   sendIcon: {
     fontSize: 19,
-    marginRight: 9,
   },
 
   sendText: {
     color: "#FFFFFF",
     fontSize: 16,
     fontWeight: "700",
+  },
+
+  setupCard: {
+    backgroundColor: "#FEF3C7",
+    borderRadius: 16,
+    padding: 17,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: "#FCD34D",
+  },
+
+  setupTitle: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#92400E",
+    marginBottom: 6,
+  },
+
+  setupText: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: "#92400E",
   },
 
   noteCard: {

@@ -123,7 +123,7 @@ function ChatVideoBubble({ uri }) {
     <VideoView
       style={styles.mediaImage}
       player={player}
-      allowsFullscreen
+      fullscreenOptions={{ enable: true }}
       allowsPictureInPicture
       nativeControls
       contentFit="contain"

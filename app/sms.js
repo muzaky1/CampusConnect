@@ -99,6 +99,8 @@ export default function SMS() {
         `Your message was submitted to KudiSMS for delivery to ${formattedNumber}.`
       );
 
+      console.log("KudiSMS raw response:", result?.providerResponse);
+
       setMessage("");
     } catch (error) {
       console.error("SMS Error:", error);
@@ -151,8 +153,7 @@ export default function SMS() {
             <Text style={styles.setupTitle}>⚠️ KudiSMS not configured</Text>
 
             <Text style={styles.setupText}>
-              Add your EXPO_PUBLIC_KUDISMS_USERNAME,
-              EXPO_PUBLIC_KUDISMS_PASSWORD and
+              Add your EXPO_PUBLIC_KUDISMS_TOKEN and
               EXPO_PUBLIC_KUDISMS_SENDER_ID to a .env.local file, then
               restart Expo with `npx expo start -c`.
             </Text>
